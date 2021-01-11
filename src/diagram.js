@@ -1,28 +1,29 @@
-import {select, selectAll} from "d3-selection";
-import {transition} from "d3-transition";
+import { nelderMead } from "fmin";
+import { select } from "d3-selection";
+import { transition } from 'd3-transition';
 
-import {venn, lossFunction, normalizeSolution, scaleSolution} from "./layout";
+import { camelCaseToDash } from "./utils";
+import { createAnnotationGenerator } from './annotation';
 import {intersectionArea, distance, getCenter} from "./circleintersection";
-import {nelderMead} from "fmin";
+import {venn, lossFunction, normalizeSolution, scaleSolution} from "./layout";
 
 /*global console:true*/
 
-export function VennDiagram() {
-    var width = 600,
-        height = 350,
-        padding = 15,
-        duration = 1000,
-        orientation = Math.PI / 2,
-        normalize = true,
-        wrap = true,
-        styled = true,
-        fontSize = null,
-        orientationOrder = null,
-
+export function VennDiagram({ 
+  width = 600,
+  height = 300,
+  padding = 45,
+  duration = 1000,
+  orientation = Math.PI / 2,
+  normalize = true,
+  wrap = true,
+  styled = true,
+  fontSize = null,
+  orientationOrder = null,
+} = {}) {
         // mimic the behaviour of d3.scale.category10 from the previous
         // version of d3
-        colourMap = {},
-
+        var colourMap = {},
         // so this is the same as d3.schemeCategory10, which is only defined in d3 4.0
         // since we can support older versions of d3 as long as we don't force this,
         // I'm hackily redefining below. TODO: remove this and change to d3.schemeCategory10
@@ -45,7 +46,6 @@ export function VennDiagram() {
 
     function chart(selection) {
         var data = selection.datum();
-
         // handle 0-sized sets by removing from input
         var toremove = {};
         data.forEach(function(datum) {
@@ -97,6 +97,10 @@ export function VennDiagram() {
         var svg = selection.select("svg")
             .attr("width", width)
             .attr("height", height);
+           
+        const annotationGenerator = createAnnotationGenerator(circles, data);
+        svg.call(annotationGenerator);
+        
 
         // to properly transition intersection areas, we need the
         // previous circles locations. load from elements
@@ -109,8 +113,6 @@ export function VennDiagram() {
             }
         });
 
-        // interpolate intersection area paths between previous and
-        // current paths
         var pathTween = function(d) {
             return function(t) {
                 var c = d.sets.map(function(set) {
@@ -144,37 +146,46 @@ export function VennDiagram() {
                 return d.sets.join("_");
             });
 
-        var enterPath = enter.append("path"),
-            enterText = enter.append("text")
-            .attr("class", "label")
-            .text(function (d) { return label(d); } )
-            .attr("text-anchor", "middle")
-            .attr("dy", ".35em")
-            .attr("x", width/2)
-            .attr("y", height/2);
-
-
-        // apply minimal style if wanted
+        var enterPath = enter.append("path");
+            // enterText = enter.append("text")
+            // .attr("class", "label")
+            // .text(function (d) { return label(d); } )
+            // .attr("text-anchor", "middle")
+            // .attr("dy", ".35em")
+            // .attr("x", width/2)
+            // .attr("y", height/2);             
+        
         if (styled) {
             enterPath.style("fill-opacity", "0")
                 .filter(function (d) { return d.sets.length == 1; } )
                 .style("fill", function(d) { return colours(d.sets); })
-                .style("fill-opacity", ".25");
+                .style("fill-opacity", ".25")
+                .style('stroke-width', '2px');
 
-            enterText
-                .style("fill", function(d) { return d.sets.length == 1 ? colours(d.sets) : "#444"; });
+            // enterText
+            //     .style("fill", function(d) { return d.sets.length == 1 ? colours(d.sets) : "#444"; });
         }
+        // override styles above by provided in config
+        enterPath.filter(function (d) { return d.sets.length == 1; } )
+          .each(function(d) {
+            if (!d.circleStyles) return;
+            const circleNode = select(this);
+            Object.keys(d.circleStyles).forEach(style => {
+                  const styleName = camelCaseToDash(style);
+                  circleNode.style(styleName, d.circleStyles[style]);
+                });
+          });
 
         // update existing, using pathTween if necessary
         var update = selection;
         if (hasPrevious) {
             update = selection.transition("venn").duration(duration);
-            update.selectAll("path")
+            update.selectAll(".venn-area").selectAll('path')
                 .attrTween("d", pathTween);
         } else {
-            update.selectAll("path")
+            update.selectAll(".venn-area").selectAll('path')
                 .attr("d", function(d) {
-                    return intersectionAreaPath(d.sets.map(function (set) { return circles[set]; }));
+                  return intersectionAreaPath(d.sets.map(function (set) { return circles[set]; }));
                 });
         }
 
@@ -210,11 +221,10 @@ export function VennDiagram() {
         // if we've been passed a fontSize explicitly, use it to
         // transition
         if (fontSize !== null) {
-            enterText.style("font-size", "0px");
+            // enterText.style("font-size", "0px");
             updateText.style("font-size", fontSize);
             exitText.style("font-size", "0px");
         }
-
 
         return {'circles': circles,
                 'textCentres': textCentres,
@@ -447,9 +457,9 @@ export function computeTextCentre(interior, exterior) {
                 // https://github.com/benfred/venn.js/issues/48#issuecomment-146069777
                 ret = getCenter(areaStats.arcs.map(function (a) { return a.p1; }));
             }
+            
         }
     }
-
     return ret;
 }
 

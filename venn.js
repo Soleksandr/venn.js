@@ -1,8 +1,10 @@
 (function (global, factory) {
-    typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports, require('d3-selection'), require('d3-transition')) :
-    typeof define === 'function' && define.amd ? define(['exports', 'd3-selection', 'd3-transition'], factory) :
-    (factory((global.venn = {}),global.d3,global.d3));
-}(this, (function (exports,d3Selection,d3Transition) { 'use strict';
+    typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports, require('d3-svg-annotation'), require('d3-selection'), require('d3-transition')) :
+    typeof define === 'function' && define.amd ? define(['exports', 'd3-svg-annotation', 'd3-selection', 'd3-transition'], factory) :
+    (factory((global.venn = {}),null,global.d3,global.d3));
+}(this, (function (exports,d3SvgAnnotation,d3Selection,d3Transition) { 'use strict';
+
+    d3Transition = d3Transition && d3Transition.hasOwnProperty('default') ? d3Transition['default'] : d3Transition;
 
     var SMALL = 1e-10;
 
@@ -157,6 +159,7 @@
                 }
             }
         }
+
         return ret;
     }
 
@@ -1235,12 +1238,157 @@
         return scaled;
     }
 
+    const mapCelsiusToRadians = (celsius) => {
+      return celsius * (Math.PI/180);
+    };
+
+    const camelCaseToDash = (str) => {
+      return str.replace( /([a-z])([A-Z])/g, '$1-$2' ).toLowerCase();
+    };
+
+    const createAnnotationGenerator = (circles, data) => {
+      const circlesArr = Object.keys(circles).reduce((acc, circleId) => {
+        acc.push({
+          id: circleId,
+          ...circles[circleId]
+        });
+
+        return acc;
+      }, []);
+      const annotations = produceAnnotationsConfig(circlesArr, data);  
+
+      return (selection) => {
+        const ann = d3SvgAnnotation.annotation().annotations(annotations);
+        selection.call(ann);
+
+        drawAnnotationConnectorEndCircle();
+        insertAnnotations(data, ann);
+
+      };
+    };
+
+    function produceAnnotationsConfig (circlesArr, data) {
+      const constants = {
+        cornerInCelsius: 15,
+        circleDx: 20.5,
+        circleDy: 40.5,
+      };
+      const intersectionPoints = getIntersectionPoints(circlesArr);
+
+      const firstCircleRadians = mapCelsiusToRadians(180 - constants.cornerInCelsius);
+      const circleRadians = mapCelsiusToRadians(constants.cornerInCelsius);
+
+      const annotationType = d3SvgAnnotation.annotationCustomType(d3SvgAnnotation.annotationLabel, {
+        "connector": {
+          "type":"elbow"
+        },
+        "note":{
+          "align":"middle",
+          "orientation":"leftRight"
+        }
+      });
+
+      const connectorColor = '#49565d';
+
+      const annotations = circlesArr.map((circle, i) => {
+        const circleFullData = data.find(item => item.sets.length === 1 && item.sets[0] === circle.id);
+
+        const color = circleFullData.circleStyles 
+          ? circleFullData.circleStyles.stroke || circleFullData.circleStyles.fill 
+          : connectorColor;
+        const commonConfigData = {
+          dy: constants.circleDy,
+          type: annotationType,
+          className: circle.id,
+          note: {
+            wrap: 200,
+            wrapSplitter: /\n/
+          },
+
+          color,
+        };
+
+        if (i) {
+          return {
+            ...commonConfigData,
+            x: circle.x + circle.radius * Math.cos(circleRadians),
+            y: circle.y + circle.radius * Math.sin(circleRadians),
+            dx: constants.circleDx,
+          };
+        }
+
+        return {
+          ...commonConfigData,
+          x: circle.x + circle.radius * Math.cos(firstCircleRadians),
+          y: circle.y + circle.radius * Math.sin(firstCircleRadians),
+          dx: -constants.circleDx,   
+        };
+      });
+      // TODO: update the logic below for case with more than 2 circles
+      if (intersectionPoints.length) {
+        annotations.push({
+          x: intersectionPoints[0].x,
+          y: Math.abs(intersectionPoints[0].y + intersectionPoints[1].y) / 2,
+          dx: 0.5,
+          dy: Math.max(...circlesArr.map(circle => circle.radius)),
+          className: 'intersection-annotation',
+          note: {
+            bgPadding: 20,
+            align: "middle",
+          },
+          color: connectorColor,
+          type: d3SvgAnnotation.annotationLabel
+        });
+      }
+
+      return annotations;
+    }
+
+    function drawAnnotationConnectorEndCircle () {
+      d3Selection.selectAll('.annotation-connector').datum(function(d) {
+        d3Selection.select(this).append('circle')
+          .attr('cx', d._dx)
+          .attr('cy', d._dy)
+          .attr('r', 2)
+          .attr('class', `${d._className}-connector-dot`)
+          .style('fill', d._color);
+      });
+    }
+
+    function insertAnnotations (data, ann) {
+      function applyStyles (tspan, styles) {
+        Object.keys(styles).forEach(style => {
+          const cssStyle = camelCaseToDash(style);
+          tspan.attr([cssStyle], styles[style]);
+        });
+      }
+      
+      data.forEach((item) => {
+        if (!item.annotation) {
+          return;
+        }
+
+        const annotationLabel = d3Selection.select(
+          `${item.sets.length === 1 ? `.${item.sets[0]}` : '.intersection-annotation'} .annotation-note-label`
+        );
+
+        item.annotation.forEach(a => {
+          const tspan = annotationLabel.append('tspan').text(a.text);
+
+          a.style && applyStyles(tspan, a.style);
+        });
+
+        ann.update();
+
+      });
+    }
+
     /*global console:true*/
 
     function VennDiagram() {
         var width = 600,
-            height = 350,
-            padding = 15,
+            height = 270,
+            padding = 70,
             duration = 1000,
             orientation = Math.PI / 2,
             normalize = true,
@@ -1275,7 +1423,6 @@
 
         function chart(selection) {
             var data = selection.datum();
-
             // handle 0-sized sets by removing from input
             var toremove = {};
             data.forEach(function(datum) {
@@ -1327,6 +1474,10 @@
             var svg = selection.select("svg")
                 .attr("width", width)
                 .attr("height", height);
+               
+            const annotationGenerator = createAnnotationGenerator(circles, data);
+                svg.call(annotationGenerator);
+            
 
             // to properly transition intersection areas, we need the
             // previous circles locations. load from elements
@@ -1339,8 +1490,6 @@
                 }
             });
 
-            // interpolate intersection area paths between previous and
-            // current paths
             var pathTween = function(d) {
                 return function(t) {
                     var c = d.sets.map(function(set) {
@@ -1374,37 +1523,46 @@
                     return d.sets.join("_");
                 });
 
-            var enterPath = enter.append("path"),
-                enterText = enter.append("text")
-                .attr("class", "label")
-                .text(function (d) { return label(d); } )
-                .attr("text-anchor", "middle")
-                .attr("dy", ".35em")
-                .attr("x", width/2)
-                .attr("y", height/2);
-
-
-            // apply minimal style if wanted
+            var enterPath = enter.append("path");
+                // enterText = enter.append("text")
+                // .attr("class", "label")
+                // .text(function (d) { return label(d); } )
+                // .attr("text-anchor", "middle")
+                // .attr("dy", ".35em")
+                // .attr("x", width/2)
+                // .attr("y", height/2);             
+            
             if (styled) {
                 enterPath.style("fill-opacity", "0")
                     .filter(function (d) { return d.sets.length == 1; } )
                     .style("fill", function(d) { return colours(d.sets); })
-                    .style("fill-opacity", ".25");
+                    .style("fill-opacity", ".25")
+                    .style('stroke-width', '2px');
 
-                enterText
-                    .style("fill", function(d) { return d.sets.length == 1 ? colours(d.sets) : "#444"; });
+                // enterText
+                //     .style("fill", function(d) { return d.sets.length == 1 ? colours(d.sets) : "#444"; });
             }
+            // override styles above by provided in config
+            enterPath.filter(function (d) { return d.sets.length == 1; } )
+              .each(function(d) {
+                if (!d.circleStyles) return;
+                const circleNode = d3Selection.select(this);
+                Object.keys(d.circleStyles).forEach(style => {
+                      const styleName = camelCaseToDash(style);
+                      circleNode.style(styleName, d.circleStyles[style]);
+                    });
+              });
 
             // update existing, using pathTween if necessary
             var update = selection;
             if (hasPrevious) {
                 update = selection.transition("venn").duration(duration);
-                update.selectAll("path")
+                update.selectAll(".venn-area").selectAll('path')
                     .attrTween("d", pathTween);
             } else {
-                update.selectAll("path")
+                update.selectAll(".venn-area").selectAll('path')
                     .attr("d", function(d) {
-                        return intersectionAreaPath(d.sets.map(function (set) { return circles[set]; }));
+                      return intersectionAreaPath(d.sets.map(function (set) { return circles[set]; }));
                     });
             }
 
@@ -1440,11 +1598,10 @@
             // if we've been passed a fontSize explicitly, use it to
             // transition
             if (fontSize !== null) {
-                enterText.style("font-size", "0px");
+                // enterText.style("font-size", "0px");
                 updateText.style("font-size", fontSize);
                 exitText.style("font-size", "0px");
             }
-
 
             return {'circles': circles,
                     'textCentres': textCentres,
@@ -1677,9 +1834,9 @@
                     // https://github.com/benfred/venn.js/issues/48#issuecomment-146069777
                     ret = getCenter(areaStats.arcs.map(function (a) { return a.p1; }));
                 }
+                
             }
         }
-
         return ret;
     }
 
