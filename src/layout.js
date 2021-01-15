@@ -662,15 +662,48 @@ export function scaleSolution(solution, width, height, padding) {
         xOffset = (width -  (xRange.max - xRange.min) * scaling) / 2,
         yOffset = (height - (yRange.max - yRange.min) * scaling) / 2;
 
-    var scaled = {};
+    // var scaled = {};
+    const scaledArr = [];
     for (var i = 0; i < circles.length; ++i) {
         var circle = circles[i];
-        scaled[setids[i]] = {
-            radius: scaling * circle.radius,
-            x: padding + xOffset + (circle.x - xRange.min) * scaling,
-            y: padding + yOffset + (circle.y - yRange.min) * scaling,
-        };
+        // scaled[setids[i]] = {
+        //     radius: scaling * circle.radius,
+        //     x: padding + xOffset + (circle.x - xRange.min) * scaling,
+        //     y: padding + yOffset + (circle.y - yRange.min) * scaling,
+        // };
+        scaledArr.push({
+          setId: setids[i],
+          radius: scaling * circle.radius,
+          x: padding + xOffset + (circle.x - xRange.min) * scaling,
+          y: padding + yOffset + (circle.y - yRange.min) * scaling,
+        });
     }
 
-    return scaled;
+    // decrease circle radius in case full overlapping
+    let radius;
+    const parsedScaledArr = scaledArr.map((s, i) => {
+      const equalCircleExists = scaledArr.find((sc, j) => 
+        j > i && 
+        Math.round(s.x) === Math.round(sc.x) && 
+        Math.round(s.y) === Math.round(sc.y) && 
+        Math.round(s.radius) === Math.round(sc.radius)
+      );
+
+      if (equalCircleExists) {
+        radius = radius ? radius - 2 : s.radius - 2;
+
+        return {
+          ...s,
+          radius,
+        };
+      }
+
+      return s;
+    });
+
+    return parsedScaledArr.reduce((scaled, item) => {
+      scaled[item.setId] = item;
+
+      return scaled;
+    }, {});
 }

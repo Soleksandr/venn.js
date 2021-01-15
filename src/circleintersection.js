@@ -195,10 +195,17 @@ export function circleCircleIntersection(p1, p2) {
         r1 = p1.radius,
         r2 = p2.radius;
 
-    // if to far away, or self contained - can't be done
-    if ((d >= (r1 + r2)) || (d <= Math.abs(r1 - r2))) {
+    // if to far away - can't be done
+    if ((d >= (r1 + r2))) {
         return [];
+    // if self contained, intersection will be in the center
+    } else if ((d <= Math.abs(r1 - r2))) {
+      return [{x: p1.x, y: p1.y}, {x: p1.x, y: p1.y}];
     }
+    // // if to far away, or self contained - can't be done
+    // if ((d >= (r1 + r2)) || (d <= Math.abs(r1 - r2))) {
+    //     return [];
+    // }
 
     var a = (r1 * r1 - r2 * r2 + d * d) / (2 * d),
         h = Math.sqrt(r1 * r1 - a * a),
