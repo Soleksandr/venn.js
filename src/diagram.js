@@ -98,9 +98,8 @@ export function VennDiagram({
             .attr("width", width)
             .attr("height", height);
            
-        const annotationGenerator = createAnnotationGenerator(circles, data);
-        svg.call(annotationGenerator);
-        
+        // TODO: merge circles with data and use it from .datum method of the selection
+        const annotationGenerator = createAnnotationGenerator(circles, data);      
 
         // to properly transition intersection areas, we need the
         // previous circles locations. load from elements
@@ -225,6 +224,13 @@ export function VennDiagram({
             updateText.style("font-size", fontSize);
             exitText.style("font-size", "0px");
         }
+
+
+        svg.append('g').attr('class', 'annotations-container-custom');
+        
+        const annotationsContainer = select('.annotations-container-custom').data(data);
+        
+        annotationsContainer.call(annotationGenerator);
 
         return {'circles': circles,
                 'textCentres': textCentres,

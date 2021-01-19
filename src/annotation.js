@@ -12,16 +12,20 @@ export const createAnnotationGenerator = (circles, data) => {
 
     return acc;
   }, []);
-  const annotations = produceAnnotationsConfig(circlesArr, data);  
+
+  const annotations = produceAnnotationsConfig(circlesArr, data);
+  
   return (selection) => {
     const ann = annotation().annotations(annotations);
     selection.call(ann);
 
-    // remove previously rendered annotation connector end circles if need
+    // remove previously rendered annotation connector end circles
     selectAll('.annotation-connector circle').remove();
 
-    drawAnnotationConnectorEndCircle();
-    insertAnnotations(data, ann);
+    insertAnnotations(data);
+    calculateBestPlaceForAnnotations(ann, circlesArr);
+
+    ann.update();
 
   };
 };
@@ -33,12 +37,7 @@ function produceAnnotationsConfig (circlesArr, data) {
     annotationConnectorDy: 40,
   };
   const intersectionPoints = getIntersectionPoints(circlesArr);
-
   const firstCircleAnnotationConnectorCorner = mapCelsiusToRadians(180 - constants.annotationConnectorOffsetInCelsius);
-  const secondCircleAnnotationConnectorCorner = calculateAngelOnSmallerCircle(
-    90 - constants.annotationConnectorOffsetInCelsius, 
-    circlesArr[0].radius, 
-    circlesArr[1].radius);
 
   const annotationType = annotationCustomType(annotationLabel, {
     "connector": {
@@ -55,8 +54,8 @@ function produceAnnotationsConfig (circlesArr, data) {
   const annotations = circlesArr.map((circle, i) => {
     const circleFullData = data.find(item => item.sets.length === 1 && item.sets[0] === circle.id);
 
-    const color = circleFullData.circleStyles 
-      ? circleFullData.circleStyles.stroke || circleFullData.circleStyles.fill 
+    const color = circleFullData.circleStyles
+      ? circleFullData.circleStyles.stroke || circleFullData.circleStyles.fill
       : connectorColor;
     const commonConfigData = {
       dy: constants.annotationConnectorDy,
@@ -71,9 +70,14 @@ function produceAnnotationsConfig (circlesArr, data) {
     };
 
     if (i) {
+      const secondCircleAnnotationConnectorCorner = calculateAngelOnSmallerCircle(
+        90 - constants.annotationConnectorOffsetInCelsius,
+        circlesArr[0].radius,
+        circlesArr[i].radius);
+
       return {
         ...commonConfigData,
-        x: circle.x + circle.radius * Math.cos(secondCircleAnnotationConnectorCorner), 
+        x: circle.x + circle.radius * Math.cos(secondCircleAnnotationConnectorCorner),
         y: circle.y + circle.radius * Math.sin(secondCircleAnnotationConnectorCorner),
         dx: constants.annotationConnectorDx,
       };
@@ -81,9 +85,9 @@ function produceAnnotationsConfig (circlesArr, data) {
 
     return {
       ...commonConfigData,
-      x: circle.x + circle.radius * Math.cos(firstCircleAnnotationConnectorCorner), 
+      x: circle.x + circle.radius * Math.cos(firstCircleAnnotationConnectorCorner),
       y: circle.y + circle.radius * Math.sin(firstCircleAnnotationConnectorCorner),
-      dx: -constants.annotationConnectorDx,   
+      dx: -constants.annotationConnectorDx,
     };
   });
   // TODO: update the logic below for case with more than 2 circles
@@ -106,25 +110,32 @@ function produceAnnotationsConfig (circlesArr, data) {
   return annotations;
 }
 
-function drawAnnotationConnectorEndCircle () {
-  selectAll('.annotation-connector').datum(function(d) {
-    select(this).append('circle')
-      .attr('cx', d._dx)
-      .attr('cy', d._dy)
-      .attr('r', 2)
-      .attr('class', `${d._className}-connector-dot`)
-      .style('fill', d._color);
+function drawAnnotationConnectorEndCircle (ann) {
+  ann.annotations().forEach(function (d) {
+
+    if (d.shouldBeRemoved) {
+      select(`.${d.className} .annotation-connector circle`).remove();
+      return;
+    }
+
+    select(`.${d.className} .annotation-connector`)
+      .append('circle')
+      .attr('cx', d.dx)
+          .attr('cy', d.dy)
+          .attr('r', 2)
+          .attr('class', `${d.className}-connector-dot`)
+          .style('fill', d.color);
   });
 }
 
-function insertAnnotations (data, ann) {
+function insertAnnotations (data) {
   function applyStyles (tspan, styles) {
     Object.keys(styles).forEach(style => {
       const cssStyle = camelCaseToDash(style);
       tspan.attr([cssStyle], styles[style]);
     });
   }
-  
+
   data.forEach((item) => {
     if (!item.annotation) {
       return;
@@ -138,11 +149,34 @@ function insertAnnotations (data, ann) {
       const tspan = annotationLabel.append('tspan').text(a.text);
 
       a.style && applyStyles(tspan, a.style);
+
     });
-
-    ann.update();
-
   });
+}
+
+function calculateBestPlaceForAnnotations (ann, circlesArr) {
+    ann.annotations().forEach(function(d) {
+      if (d.className === 'intersection-annotation') {
+        const size = select('.intersection-annotation .annotation-note-label').node().getBBox();
+
+        if (!size.width || circlesArr.length < 2) {
+          return;
+        }
+        
+        const rSum = circlesArr[0].radius + circlesArr[1].radius;
+        const circlesCentersDistance = Math.abs(circlesArr[0].x - circlesArr[1].x);
+        const x = circlesArr[0].x + circlesArr[0].radius - ((rSum - circlesCentersDistance) / 2);
+
+        if (rSum - circlesCentersDistance >= size.width + 32) {
+          d.position = { x, y: d.position.y + size.y - size.height / 2 };
+          d.offset = { x: 0, y: 0 };
+          d.shouldBeRemoved = true;
+
+        }
+      }
+    });
+    
+    drawAnnotationConnectorEndCircle(ann);
 }
 
 function calculateAngelOnSmallerCircle (biggerCircleAngel, biggerCircleRadius, smallerCircleRadius) {
