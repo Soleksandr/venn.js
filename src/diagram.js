@@ -3,7 +3,7 @@ import { select } from "d3-selection";
 import { transition } from 'd3-transition';
 
 import { camelCaseToDash } from "./utils";
-import { createAnnotationGenerator } from './annotation';
+import { addAnnotations} from './annotation';
 import {intersectionArea, distance, getCenter} from "./circleintersection";
 import {venn, lossFunction, normalizeSolution, scaleSolution} from "./layout";
 
@@ -12,7 +12,10 @@ import {venn, lossFunction, normalizeSolution, scaleSolution} from "./layout";
 export function VennDiagram({ 
   width = 600,
   height = 300,
-  padding = 45,
+  padding = 0,
+  offsetY = 0,
+  offsetX = 0,
+  circlesBoxHeight = 0,
   duration = 1000,
   orientation = Math.PI / 2,
   normalize = true,
@@ -46,6 +49,8 @@ export function VennDiagram({
 
     function chart(selection) {
         var data = selection.datum();
+        // make sure first circle is biggest and overlapping data at the end
+        data = data.sort((a, b) => a.sets.length - b.sets.length || b.size - a.size);
         // handle 0-sized sets by removing from input
         var toremove = {};
         data.forEach(function(datum) {
@@ -69,7 +74,7 @@ export function VennDiagram({
                                             orientationOrder);
             }
 
-            circles = scaleSolution(solution, width, height, padding);
+            circles = scaleSolution({solution, width, height, padding, offsetY, offsetX, circlesBoxHeight}); // 370
             textCentres = computeTextCentres(circles, data);
         }
 
@@ -96,10 +101,7 @@ export function VennDiagram({
 
         var svg = selection.select("svg")
             .attr("width", width)
-            .attr("height", height);
-           
-        // TODO: merge circles with data and use it from .datum method of the selection
-        const annotationGenerator = createAnnotationGenerator(circles, data);      
+            .attr("height", height);  
 
         // to properly transition intersection areas, we need the
         // previous circles locations. load from elements
@@ -225,12 +227,25 @@ export function VennDiagram({
             exitText.style("font-size", "0px");
         }
 
+        // render annotations after all needed data available
+        const fullData = data.map(item => {
+          const circleData = {};
+          intersectionArea(item.sets.map(set => circles[set]), circleData);
+          
+          return {
+            ...item,
+            circleData,
+          };
+          
+        });
 
-        svg.append('g').attr('class', 'annotations-container-custom');
+        select('.annotations-container').remove();
+
+        svg.append('g').attr('class', 'annotations-container');
         
-        const annotationsContainer = select('.annotations-container-custom').data(data);
+        const annotationsContainer = select('.annotations-container').data([fullData]);
         
-        annotationsContainer.call(annotationGenerator);
+        annotationsContainer.call(addAnnotations, {width, height });
 
         return {'circles': circles,
                 'textCentres': textCentres,

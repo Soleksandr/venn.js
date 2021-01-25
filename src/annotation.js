@@ -1,111 +1,114 @@
 import { annotation, annotationLabel, annotationCustomType } from 'd3-svg-annotation';
-import {select, selectAll} from "d3-selection";
-import { getIntersectionPoints } from './circleintersection';
+import { select } from "d3-selection";
 import { camelCaseToDash, mapCelsiusToRadians } from './utils';
 
-export const createAnnotationGenerator = (circles, data) => {
-  const circlesArr = Object.keys(circles).reduce((acc, circleId) => {
-    acc.push({
-      id: circleId,
-      ...circles[circleId]
-    });
+export const addAnnotations = (selection, containerSize) => {
+  const annotations = generateAnnotations(selection);
+  const ann = annotation().annotations(annotations);
 
-    return acc;
-  }, []);
+  selection.call(ann);
 
-  const annotations = produceAnnotationsConfig(circlesArr, data);
-  
-  return (selection) => {
-    const ann = annotation().annotations(annotations);
-    selection.call(ann);
+  // remove previously rendered annotation connector end circles
+  selection.selectAll('.annotation-connector circle').remove();
 
-    // remove previously rendered annotation connector end circles
-    selectAll('.annotation-connector circle').remove();
+  insertAnnotationsContent(selection);
+  ann.update();
 
-    insertAnnotations(data);
-    calculateBestPlaceForAnnotations(ann, circlesArr);
-
-    ann.update();
-
-  };
+  calculateBestPlaceForAnnotations(ann, selection, containerSize);
 };
 
-function produceAnnotationsConfig (circlesArr, data) {
-  const constants = {
-    annotationConnectorOffsetInCelsius: 30,
-    annotationConnectorDx: 25,
-    annotationConnectorDy: 40,
-  };
-  const intersectionPoints = getIntersectionPoints(circlesArr);
-  const firstCircleAnnotationConnectorCorner = mapCelsiusToRadians(180 - constants.annotationConnectorOffsetInCelsius);
-
-  const annotationType = annotationCustomType(annotationLabel, {
-    "connector": {
-      "type":"elbow"
-    },
-    "note":{
-      "align":"middle",
-      "orientation":"leftRight"
-    }
-  });
-
+function generateAnnotations (selection) {
+  const annotations = [];
+  
+  const dx = 25;
+  const dy = 40;
   const connectorColor = '#49565d';
 
-  const annotations = circlesArr.map((circle, i) => {
-    const circleFullData = data.find(item => item.sets.length === 1 && item.sets[0] === circle.id);
+  selection.each(function(d) {
+    d.forEach((item, i) => {
+      const config = item.annotation.config || {};
+      const angelCelsius = config.angel || 30;
+      
+      // circles annotations
+      if (item.sets.length === 1) {
+        const color = item.circleStyles
+          ? item.circleStyles.stroke || item.circleStyles.fill
+          : connectorColor;
+        const annotationType = annotationCustomType(annotationLabel, {
+          "connector": {
+            "type":"elbow"
+          },
+          "note":{
+            "align": config.align || "middle", // bottom for tablets
+            "orientation":"leftRight"
+          }
+        });
+        const commonData = {
+          dy,
+          type: annotationType,
+          className: `${item.sets[0]}`,
+          note: {
+            wrap: 250,
+            padding: config.notePadding || 10, // ~ -40 for tablets
+            wrapSplitter: /\n/,
+            placement: config.placement
+          },
+          color,
+        };
 
-    const color = circleFullData.circleStyles
-      ? circleFullData.circleStyles.stroke || circleFullData.circleStyles.fill
-      : connectorColor;
-    const commonConfigData = {
-      dy: constants.annotationConnectorDy,
-      type: annotationType,
-      className: `${circle.id}`,
-      note: {
-        wrap: 250,
-        padding: 10,
-        wrapSplitter: /\n/
-      },
-      color,
-    };
+        const { circle } = item.circleData.arcs[0];
 
-    if (i) {
-      const secondCircleAnnotationConnectorCorner = calculateAngelOnSmallerCircle(
-        90 - constants.annotationConnectorOffsetInCelsius,
-        circlesArr[0].radius,
-        circlesArr[i].radius);
+        if (i) {
+          const { circle: biggestCircle } = d[0].circleData.arcs[0];
+          const angel = calculateAngelOnSmallerCircle(
+            90 - angelCelsius,
+            biggestCircle.radius,
+            circle.radius
+            );
+            
+            annotations.push({
+              ...commonData,
+              x: circle.x + circle.radius * Math.cos(angel),
+              y: circle.y + circle.radius * Math.sin(angel),
+              dx,
+            });
+            
+          } else {
+          const angel = mapCelsiusToRadians(180 - angelCelsius);
 
-      return {
-        ...commonConfigData,
-        x: circle.x + circle.radius * Math.cos(secondCircleAnnotationConnectorCorner),
-        y: circle.y + circle.radius * Math.sin(secondCircleAnnotationConnectorCorner),
-        dx: constants.annotationConnectorDx,
-      };
-    }
+          annotations.push({
+            ...commonData,
+            x: circle.x + circle.radius * Math.cos(angel),
+            y: circle.y + circle.radius * Math.sin(angel),
+            dx: -dx,
+          });
+        } 
+        // intersection annotation
+      } else {
+        const { intersectionPoints } = item.circleData;
 
-    return {
-      ...commonConfigData,
-      x: circle.x + circle.radius * Math.cos(firstCircleAnnotationConnectorCorner),
-      y: circle.y + circle.radius * Math.sin(firstCircleAnnotationConnectorCorner),
-      dx: -constants.annotationConnectorDx,
-    };
-  });
-  // TODO: update the logic below for case with more than 2 circles
-  if (intersectionPoints.length) {
-    annotations.push({
-      x: intersectionPoints[0].x,
-      y: Math.abs(intersectionPoints[0].y + intersectionPoints[1].y) / 2,
-      dx: 0,
-      dy: Math.max(...circlesArr.map(circle => circle.radius)),
-      className: 'intersection-annotation',
-      note: {
-        padding: 10,
-        align: "middle",
-      },
-      color: connectorColor,
-      type: annotationLabel
+        if (!intersectionPoints.length) {
+          return;
+        }
+
+        const dy = Math.max(...item.circleData.arcs.map((arc) => arc.circle.radius)) + 5;
+
+        annotations.push({
+          x: intersectionPoints[0].x,
+          y: Math.abs(intersectionPoints[0].y + intersectionPoints[1].y) / 2,
+          dx: 0,
+          dy: config.position === 'top' ? -dy : dy,
+          className: 'intersection-annotation',
+          note: {
+            padding: 7,
+            align: "middle",
+          },
+          color: connectorColor,
+          type: annotationLabel
+        });
+      }
     });
-  }
+  });
 
   return annotations;
 }
@@ -126,9 +129,11 @@ function drawAnnotationConnectorEndCircle (ann) {
           .attr('class', `${d.className}-connector-dot`)
           .style('fill', d.color);
   });
+
+  ann.update();
 }
 
-function insertAnnotations (data) {
+function insertAnnotationsContent (selection) {
   function applyStyles (tspan, styles) {
     Object.keys(styles).forEach(style => {
       const cssStyle = camelCaseToDash(style);
@@ -136,36 +141,54 @@ function insertAnnotations (data) {
     });
   }
 
-  data.forEach((item) => {
-    if (!item.annotation) {
-      return;
-    }
-
-    const annotationLabel = select(
-      `${item.sets.length === 1 ? `.${item.sets[0]}` : '.intersection-annotation'} .annotation-note-label`
-    );
-
-    item.annotation.forEach(a => {
-      const tspan = annotationLabel.append('tspan').text(a.text);
-
-      a.style && applyStyles(tspan, a.style);
-
+  selection.each(function(d) {
+    d.forEach(item => {
+      const annotationContent = item.annotation.content;
+  
+      if (annotationContent) {
+        const annotationLabel = selection.select(
+          `${item.sets.length === 1 ? `.${item.sets[0]}` : '.intersection-annotation'} .annotation-note-label`
+        );
+    
+        item.annotation.content.forEach(a => {
+          const tspan = annotationLabel.append('tspan').text(a.text);
+    
+          a.style && applyStyles(tspan, a.style);
+    
+        });
+      }
     });
   });
 }
 
-function calculateBestPlaceForAnnotations (ann, circlesArr) {
+function calculateBestPlaceForAnnotations (ann, selection, containerSize) {
+    const circles = [];
+
+    selection.each(function (d) {
+      d.forEach(item => {
+        if (item.circleData.arcs.length === 1) {
+          circles.push(item.circleData.arcs[0].circle);
+        }
+      });
+    });
+
+    if (circles.length < 2) {
+      drawAnnotationConnectorEndCircle(ann);
+      return;
+    }
+
+    const rSum = circles[0].radius + circles[1].radius;
+    const circlesCentersDistance = Math.abs(circles[0].x - circles[1].x);
+    const x = circles[0].x + circles[0].radius - ((rSum - circlesCentersDistance) / 2);
+
     ann.annotations().forEach(function(d) {
       if (d.className === 'intersection-annotation') {
-        const size = select('.intersection-annotation .annotation-note-label').node().getBBox();
-
-        if (!size.width || circlesArr.length < 2) {
+        const size = selection.select('.intersection-annotation .annotation-note-label').node().getBBox();
+        
+        if (!size.width || circles.length < 2) {
           return;
         }
         
-        const rSum = circlesArr[0].radius + circlesArr[1].radius;
-        const circlesCentersDistance = Math.abs(circlesArr[0].x - circlesArr[1].x);
-        const x = circlesArr[0].x + circlesArr[0].radius - ((rSum - circlesCentersDistance) / 2);
 
         if (rSum - circlesCentersDistance >= size.width + 32) {
           d.position = { x, y: d.position.y + size.y - size.height / 2 };
@@ -173,7 +196,19 @@ function calculateBestPlaceForAnnotations (ann, circlesArr) {
           d.shouldBeRemoved = true;
 
         }
+      } else {
+        const annotationsContainerSize = selection.node().getBoundingClientRect();
+
+        const widthDiff = containerSize.width - annotationsContainerSize.width;
+
+        if (widthDiff && d.note.placement === 'containerEdge') {
+          const paddingOffset = widthDiff / 2;
+
+          d.note.padding = d.note.padding + paddingOffset - 10;
+
+        }
       }
+
     });
     
     drawAnnotationConnectorEndCircle(ann);

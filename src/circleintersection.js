@@ -147,6 +147,7 @@ export function getIntersectionPoints(circles) {
             for (var k = 0; k < intersect.length; ++k) {
                 var p = intersect[k];
                 p.parentIndex = [i,j];
+                p.intersectionSets = [circles[i].setId, circles[j].setId];
                 ret.push(p);
             }
         }
