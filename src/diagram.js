@@ -102,7 +102,7 @@ export function VennDiagram({
         var svg = selection.select("svg")
             .attr("width", width)
             .attr("height", height);  
-
+            
         // to properly transition intersection areas, we need the
         // previous circles locations. load from elements
         var previous = {}, hasPrevious = false;
@@ -239,13 +239,14 @@ export function VennDiagram({
           
         });
 
-        select('.annotations-container').remove();
+        
+        svg.selectAll('.annotations-container')
+          .data([fullData])
+          .enter()
+          .append('g')
+          .attr('class', 'annotations-container');
 
-        svg.append('g').attr('class', 'annotations-container');
-        
-        const annotationsContainer = select('.annotations-container').data([fullData]);
-        
-        annotationsContainer.call(addAnnotations, {width, height });
+        svg.selectAll('.annotations-container').call(addAnnotations, { width, height, duration });
 
         return {'circles': circles,
                 'textCentres': textCentres,
