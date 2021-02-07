@@ -3,9 +3,10 @@ import { select } from "d3-selection";
 import { transition } from 'd3-transition';
 
 import { camelCaseToDash } from "./utils";
-import { addAnnotations} from './annotation';
 import {intersectionArea, distance, getCenter} from "./circleintersection";
 import {venn, lossFunction, normalizeSolution, scaleSolution} from "./layout";
+
+export { createHighlightAreaFunc } from './callbacks';
 
 /*global console:true*/
 
@@ -228,7 +229,7 @@ export function VennDiagram({
         }
 
         // render annotations after all needed data available
-        const fullData = data.map(item => {
+        const fullCirclesData = data.map(item => {
           const circleData = {};
           intersectionArea(item.sets.map(set => circles[set]), circleData);
           
@@ -236,24 +237,18 @@ export function VennDiagram({
             ...item,
             circleData,
           };
-          
         });
 
-        
-        svg.selectAll('.annotations-container')
-          .data([fullData])
-          .enter()
-          .append('g')
-          .attr('class', 'annotations-container');
-
-        svg.selectAll('.annotations-container').call(addAnnotations, { width, height, duration });
-
-        return {'circles': circles,
-                'textCentres': textCentres,
-                'nodes': nodes,
-                'enter': enter,
-                'update': update,
-                'exit': exit};
+        return {
+          'circles': circles,
+          'textCentres': textCentres,
+          'nodes': nodes,
+          'enter': enter,
+          'update': update,
+          'exit': exit,
+          "fullCirclesData": fullCirclesData,
+          "svg": svg,
+        };
     }
 
     chart.wrap = function(_) {
@@ -574,7 +569,7 @@ export function sortAreas(div, relativeTo) {
     }
 
     // need to sort div's so that Z order is correct
-    div.selectAll("g").sort(function (a, b) {
+    div.selectAll("g.venn-area").sort(function (a, b) {
         // highest order set intersections first
         if (a.sets.length != b.sets.length) {
             return a.sets.length - b.sets.length;
