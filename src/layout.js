@@ -632,7 +632,7 @@ export function normalizeSolution(solution, orientation, orientationOrder) {
 /** Scales a solution from venn.venn or venn.greedyLayout such that it fits in
 a rectangle of width/height - with padding around the borders. also
 centers the diagram in the available space at the same time */
-export function scaleSolution({solution, width, height, padding, offsetX, offsetY, circlesBoxHeight}) {
+export function scaleSolution({solution, width, height, padding, offsetX, offsetY, circlesBoxHeight, circlesBoxWidth}) {
     var circles = [], setids = [];
     for (var setid in solution) {
         if (solution.hasOwnProperty(setid)) {
@@ -644,6 +644,7 @@ export function scaleSolution({solution, width, height, padding, offsetX, offset
     width -= 2*padding;
     height -= 2*padding;
     circlesBoxHeight -= circlesBoxHeight ? 2*padding : 0;
+    circlesBoxWidth -= circlesBoxWidth ? 2*padding : 0;
 
     var bounds = getBoundingBox(circles),
         xRange = bounds.xRange,
@@ -655,7 +656,7 @@ export function scaleSolution({solution, width, height, padding, offsetX, offset
         return solution;
     }
 
-    var xScaling = width  / (xRange.max - xRange.min),
+    var xScaling = (circlesBoxWidth || width)  / (xRange.max - xRange.min),
         yScaling = (circlesBoxHeight || height) / (yRange.max - yRange.min),
         scaling = Math.min(yScaling, xScaling),
 

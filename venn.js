@@ -1,10 +1,8 @@
 (function (global, factory) {
-    typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports, require('d3-svg-annotation'), require('d3-selection'), require('d3-transition')) :
-    typeof define === 'function' && define.amd ? define(['exports', 'd3-svg-annotation', 'd3-selection', 'd3-transition'], factory) :
-    (factory((global.venn = {}),null,global.d3,global.d3));
-}(this, (function (exports,d3SvgAnnotation,d3Selection,d3Transition) { 'use strict';
-
-    d3Transition = d3Transition && d3Transition.hasOwnProperty('default') ? d3Transition['default'] : d3Transition;
+    typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports, require('d3-selection'), require('d3-transition')) :
+    typeof define === 'function' && define.amd ? define(['exports', 'd3-selection', 'd3-transition'], factory) :
+    (factory((global.venn = {}),global.d3,global.d3));
+}(this, (function (exports,d3Selection,d3Transition) { 
 
     var SMALL = 1e-10;
 
@@ -155,6 +153,7 @@
                 for (var k = 0; k < intersect.length; ++k) {
                     var p = intersect[k];
                     p.parentIndex = [i,j];
+                    p.intersectionSets = [circles[i].setId, circles[j].setId];
                     ret.push(p);
                 }
             }
@@ -203,10 +202,17 @@
             r1 = p1.radius,
             r2 = p2.radius;
 
-        // if to far away, or self contained - can't be done
-        if ((d >= (r1 + r2)) || (d <= Math.abs(r1 - r2))) {
+        // if to far away - can't be done
+        if ((d >= (r1 + r2))) {
             return [];
+        // if self contained, intersection will be in the center
+        } else if ((d <= Math.abs(r1 - r2))) {
+          return [{x: p1.x, y: p1.y}, {x: p1.x, y: p1.y}];
         }
+        // // if to far away, or self contained - can't be done
+        // if ((d >= (r1 + r2)) || (d <= Math.abs(r1 - r2))) {
+        //     return [];
+        // }
 
         var a = (r1 * r1 - r2 * r2 + d * d) / (2 * d),
             h = Math.sqrt(r1 * r1 - a * a),
@@ -1195,7 +1201,7 @@
     /** Scales a solution from venn.venn or venn.greedyLayout such that it fits in
     a rectangle of width/height - with padding around the borders. also
     centers the diagram in the available space at the same time */
-    function scaleSolution(solution, width, height, padding) {
+    function scaleSolution({solution, width, height, padding, offsetX, offsetY, circlesBoxHeight, circlesBoxWidth}) {
         var circles = [], setids = [];
         for (var setid in solution) {
             if (solution.hasOwnProperty(setid)) {
@@ -1206,6 +1212,8 @@
 
         width -= 2*padding;
         height -= 2*padding;
+        circlesBoxHeight -= circlesBoxHeight ? 2*padding : 0;
+        circlesBoxWidth -= circlesBoxWidth ? 2*padding : 0;
 
         var bounds = getBoundingBox(circles),
             xRange = bounds.xRange,
@@ -1217,190 +1225,159 @@
             return solution;
         }
 
-        var xScaling = width  / (xRange.max - xRange.min),
-            yScaling = height / (yRange.max - yRange.min),
+        var xScaling = (circlesBoxWidth || width)  / (xRange.max - xRange.min),
+            yScaling = (circlesBoxHeight || height) / (yRange.max - yRange.min),
             scaling = Math.min(yScaling, xScaling),
 
             // while we're at it, center the diagram too
-            xOffset = (width -  (xRange.max - xRange.min) * scaling) / 2,
-            yOffset = (height - (yRange.max - yRange.min) * scaling) / 2;
+            xOffset = ((width -  (xRange.max - xRange.min) * scaling) / 2) + offsetX,
+            yOffset = ((height - (yRange.max - yRange.min) * scaling) / 2) + offsetY;
 
-        var scaled = {};
+        // var scaled = {};
+        const scaledArr = [];
         for (var i = 0; i < circles.length; ++i) {
             var circle = circles[i];
-            scaled[setids[i]] = {
-                radius: scaling * circle.radius,
-                x: padding + xOffset + (circle.x - xRange.min) * scaling,
-                y: padding + yOffset + (circle.y - yRange.min) * scaling,
-            };
+            // scaled[setids[i]] = {
+            //     radius: scaling * circle.radius,
+            //     x: padding + xOffset + (circle.x - xRange.min) * scaling,
+            //     y: padding + yOffset + (circle.y - yRange.min) * scaling,
+            // };
+            scaledArr.push({
+              setId: setids[i],
+              radius: scaling * circle.radius,
+              x: padding + xOffset + (circle.x - xRange.min) * scaling,
+              y: padding + yOffset + (circle.y - yRange.min) * scaling,
+            });
         }
 
-        return scaled;
-    }
+        // decrease circle radius in case full overlapping
+        let radius;
+        const parsedScaledArr = scaledArr.map((s, i) => {
+          const equalCircleExists = scaledArr.find((sc, j) => 
+            j > i && 
+            Math.round(s.x) === Math.round(sc.x) && 
+            Math.round(s.y) === Math.round(sc.y) && 
+            Math.round(s.radius) === Math.round(sc.radius)
+          );
 
-    const mapCelsiusToRadians = (celsius) => {
-      return celsius * (Math.PI/180);
-    };
+          if (equalCircleExists) {
+            radius = radius ? radius - 2 : s.radius - 2;
+
+            return {
+              ...s,
+              radius,
+            };
+          }
+
+          return s;
+        });
+
+        return parsedScaledArr.reduce((scaled, item) => {
+          scaled[item.setId] = item;
+
+          return scaled;
+        }, {});
+    }
 
     const camelCaseToDash = (str) => {
       return str.replace( /([a-z])([A-Z])/g, '$1-$2' ).toLowerCase();
     };
 
-    const createAnnotationGenerator = (circles, data) => {
-      const circlesArr = Object.keys(circles).reduce((acc, circleId) => {
-        acc.push({
-          id: circleId,
-          ...circles[circleId]
+    const TRANSITION_TIME = 400;
+
+    const clearHighlighted = () => {
+      d3Selection.selectAll('.venn-area').each(function(d) {
+        const node = d3Selection.select(this).select('path');
+        const transition = node.transition().duration(TRANSITION_TIME);
+
+        if ( d.circleStyles) {
+          applyStyles(transition, d.circleStyles);
+        } else {
+          transition
+            .style('fill-opacity', 0)
+            .style('stroke', 'rgba(0,0,0,0)');
+        }
+      });
+    };
+
+    const createHighlightAreaFunc$$1 = (containerId) => {
+      return (...setsArr) => {
+        clearHighlighted();
+      
+        setsArr.forEach(sets => {
+          let node = null;
+        
+          const allCombinations = getAllSetsCombinations(sets);
+
+          allCombinations.forEach(combination => {
+            const setsSelection = d3Selection.select(`[data-venn-sets=${combination}]`);
+        
+            if (!setsSelection.empty()) {
+              node = setsSelection;
+            }
+          });
+
+          if (!node) {
+            throw Error (`Unable to find ${sets} set`);
+          }
+
+          const selection = d3Selection.select(`#${containerId}`);
+
+          sortAreas(selection, node.datum());
+        
+          return node.select('path').transition().duration(TRANSITION_TIME)
+            .style('fill', '#333333')
+            .style('fill-opacity', 0.4)
+            .style('stroke-width', '2px')
+            .style('stroke', '#333333');
         });
-
-        return acc;
-      }, []);
-      const annotations = produceAnnotationsConfig(circlesArr, data);  
-
-      return (selection) => {
-        const ann = d3SvgAnnotation.annotation().annotations(annotations);
-        selection.call(ann);
-
-        drawAnnotationConnectorEndCircle();
-        insertAnnotations(data, ann);
-
       };
     };
 
-    function produceAnnotationsConfig (circlesArr, data) {
-      const constants = {
-        cornerInCelsius: 15,
-        circleDx: 20.5,
-        circleDy: 40.5,
-      };
-      const intersectionPoints = getIntersectionPoints(circlesArr);
+    function getAllSetsCombinations (sets) {
+      return sets.reduce((allSetsCombination, set, i) => {
+        sets.forEach((s, j) => {
+          const newSets = [...sets];
+          if (j) {
+            newSets[j - 1] = sets[j];
+            newSets[j] = set;
+          }
 
-      const firstCircleRadians = mapCelsiusToRadians(180 - constants.cornerInCelsius);
-      const circleRadians = mapCelsiusToRadians(constants.cornerInCelsius);
-
-      const annotationType = d3SvgAnnotation.annotationCustomType(d3SvgAnnotation.annotationLabel, {
-        "connector": {
-          "type":"elbow"
-        },
-        "note":{
-          "align":"middle",
-          "orientation":"leftRight"
-        }
-      });
-
-      const connectorColor = '#49565d';
-
-      const annotations = circlesArr.map((circle, i) => {
-        const circleFullData = data.find(item => item.sets.length === 1 && item.sets[0] === circle.id);
-
-        const color = circleFullData.circleStyles 
-          ? circleFullData.circleStyles.stroke || circleFullData.circleStyles.fill 
-          : connectorColor;
-        const commonConfigData = {
-          dy: constants.circleDy,
-          type: annotationType,
-          className: circle.id,
-          note: {
-            wrap: 200,
-            wrapSplitter: /\n/
-          },
-
-          color,
-        };
-
-        if (i) {
-          return {
-            ...commonConfigData,
-            x: circle.x + circle.radius * Math.cos(circleRadians),
-            y: circle.y + circle.radius * Math.sin(circleRadians),
-            dx: constants.circleDx,
-          };
-        }
-
-        return {
-          ...commonConfigData,
-          x: circle.x + circle.radius * Math.cos(firstCircleRadians),
-          y: circle.y + circle.radius * Math.sin(firstCircleRadians),
-          dx: -constants.circleDx,   
-        };
-      });
-      // TODO: update the logic below for case with more than 2 circles
-      if (intersectionPoints.length) {
-        annotations.push({
-          x: intersectionPoints[0].x,
-          y: Math.abs(intersectionPoints[0].y + intersectionPoints[1].y) / 2,
-          dx: 0.5,
-          dy: Math.max(...circlesArr.map(circle => circle.radius)),
-          className: 'intersection-annotation',
-          note: {
-            bgPadding: 20,
-            align: "middle",
-          },
-          color: connectorColor,
-          type: d3SvgAnnotation.annotationLabel
+          allSetsCombination.push(newSets.join('_'));
         });
-      }
 
-      return annotations;
+        return allSetsCombination;
+      }, []);
     }
 
-    function drawAnnotationConnectorEndCircle () {
-      d3Selection.selectAll('.annotation-connector').datum(function(d) {
-        d3Selection.select(this).append('circle')
-          .attr('cx', d._dx)
-          .attr('cy', d._dy)
-          .attr('r', 2)
-          .attr('class', `${d._className}-connector-dot`)
-          .style('fill', d._color);
-      });
-    }
-
-    function insertAnnotations (data, ann) {
-      function applyStyles (tspan, styles) {
-        Object.keys(styles).forEach(style => {
-          const cssStyle = camelCaseToDash(style);
-          tspan.attr([cssStyle], styles[style]);
-        });
-      }
-      
-      data.forEach((item) => {
-        if (!item.annotation) {
-          return;
-        }
-
-        const annotationLabel = d3Selection.select(
-          `${item.sets.length === 1 ? `.${item.sets[0]}` : '.intersection-annotation'} .annotation-note-label`
-        );
-
-        item.annotation.forEach(a => {
-          const tspan = annotationLabel.append('tspan').text(a.text);
-
-          a.style && applyStyles(tspan, a.style);
-        });
-
-        ann.update();
-
+    function applyStyles (node, styles) {
+      Object.keys(styles).forEach(style => {
+        const cssStyle = camelCaseToDash(style);
+        node.style([cssStyle], styles[style]);
       });
     }
 
     /*global console:true*/
 
-    function VennDiagram() {
-        var width = 600,
-            height = 270,
-            padding = 70,
-            duration = 1000,
-            orientation = Math.PI / 2,
-            normalize = true,
-            wrap = true,
-            styled = true,
-            fontSize = null,
-            orientationOrder = null,
-
+    function VennDiagram({ 
+      width = 600,
+      height = 300,
+      padding = 0,
+      offsetY = 0,
+      offsetX = 0,
+      circlesBoxHeight = 0,
+      circlesBoxWidth = 0,
+      duration = 1000,
+      orientation = Math.PI / 2,
+      normalize = true,
+      wrap = true,
+      styled = true,
+      fontSize = null,
+      orientationOrder = null,
+    } = {}) {
             // mimic the behaviour of d3.scale.category10 from the previous
             // version of d3
-            colourMap = {},
-
+            var colourMap = {},
             // so this is the same as d3.schemeCategory10, which is only defined in d3 4.0
             // since we can support older versions of d3 as long as we don't force this,
             // I'm hackily redefining below. TODO: remove this and change to d3.schemeCategory10
@@ -1423,6 +1400,8 @@
 
         function chart(selection) {
             var data = selection.datum();
+            // make sure first circle is biggest and overlapping data at the end
+            data = data.sort((a, b) => a.sets.length - b.sets.length || b.size - a.size);
             // handle 0-sized sets by removing from input
             var toremove = {};
             data.forEach(function(datum) {
@@ -1446,8 +1425,19 @@
                                                 orientationOrder);
                 }
 
-                circles = scaleSolution(solution, width, height, padding);
+                circles = scaleSolution({
+                  solution, 
+                  width, 
+                  height, 
+                  padding, 
+                  offsetY, 
+                  offsetX, 
+                  circlesBoxHeight, 
+                  circlesBoxWidth
+                });
                 textCentres = computeTextCentres(circles, data);
+
+                
             }
 
             // Figure out the current label for each set. These can change
@@ -1473,12 +1463,8 @@
 
             var svg = selection.select("svg")
                 .attr("width", width)
-                .attr("height", height);
-               
-            const annotationGenerator = createAnnotationGenerator(circles, data);
-                svg.call(annotationGenerator);
-            
-
+                .attr("height", height);  
+                
             // to properly transition intersection areas, we need the
             // previous circles locations. load from elements
             var previous = {}, hasPrevious = false;
@@ -1603,12 +1589,27 @@
                 exitText.style("font-size", "0px");
             }
 
-            return {'circles': circles,
-                    'textCentres': textCentres,
-                    'nodes': nodes,
-                    'enter': enter,
-                    'update': update,
-                    'exit': exit};
+            // render annotations after all needed data available
+            const fullCirclesData = data.map(item => {
+              const circleData = {};
+              intersectionArea(item.sets.map(set => circles[set]), circleData);
+              
+              return {
+                ...item,
+                circleData,
+              };
+            });
+
+            return {
+              'circles': circles,
+              'textCentres': textCentres,
+              'nodes': nodes,
+              'enter': enter,
+              'update': update,
+              'exit': exit,
+              "fullCirclesData": fullCirclesData,
+              "svg": svg,
+            };
         }
 
         chart.wrap = function(_) {
@@ -1929,7 +1930,7 @@
         }
 
         // need to sort div's so that Z order is correct
-        div.selectAll("g").sort(function (a, b) {
+        div.selectAll("g.venn-area").sort(function (a, b) {
             // highest order set intersections first
             if (a.sets.length != b.sets.length) {
                 return a.sets.length - b.sets.length;
@@ -2011,6 +2012,7 @@
     exports.circlePath = circlePath;
     exports.circleFromPath = circleFromPath;
     exports.intersectionAreaPath = intersectionAreaPath;
+    exports.createHighlightAreaFunc = createHighlightAreaFunc$$1;
 
     Object.defineProperty(exports, '__esModule', { value: true });
 
